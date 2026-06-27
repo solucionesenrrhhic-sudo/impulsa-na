@@ -948,31 +948,64 @@ async function doRegister() {
   if (pass.length < 6) { showAuthError('La contraseña debe tener al menos 6 caracteres'); return; }
   showLoading(true);
 
-  // 1. Crear usuario auth
-  const d = await sb.signUp(email, pass, { nombre, negocio });
-  if (d.error) { showLoading(false); showAuthError(d.error.message || 'Error al registrarse'); return; }
+  try {
+    // 1. Crear usuario auth
+    const d = await sb.signUp(email, pass, { nombre, negocio });
+    if (d.error) { showLoading(false); showAuthError(d.error.message || 'Error al registrarse'); return; }
 
-  // 2. Login para obtener token
-  const login = await sb.signIn(email, pass);
-  if (login.error) { showLoading(false); showAuthError('Cuenta creada. Intentá iniciar sesión.'); return; }
-  localStorage.setItem('impulsa_token', login.access_token);
+    // 2. Login para obtener token
+    const login = await sb.signIn(email, pass);
+    if (login.error || !login.access_token) {
+      showLoading(false);
+      showAuthError('Cuenta creada. Por favor iniciá sesión.');
+      switchAuthTab('login');
+      document.getElementById('login-email').value = email;
+      return;
+    }
+    localStorage.setItem('impulsa_token', login.access_token);
+    sb.token = login.access_token;
 
-  // 3. Crear tenant
-  const authUser = await sb.getUser();
-  const tQ = await (await sb.from('tenants')).insert({ nombre, negocio, email, whatsapp: wa });
-  const tenant = tQ.data[0];
+    // 3. Obtener usuario autenticado
+    const authUser = await sb.getUser();
+    if (!authUser || !authUser.id) {
+      showLoading(false);
+      showAuthError('Error al obtener usuario. Iniciá sesión manualmente.');
+      return;
+    }
 
-  // 4. Crear usuario
-  await (await sb.from('usuarios')).insert({
-    auth_id: authUser.id, tenant_id: tenant.id,
-    nombre, email, rol: 'admin'
-  });
+    // 4. Verificar si ya tiene tenant (evita duplicados)
+    const uExist = await (await sb.from('usuarios')).eq('auth_id', authUser.id).get();
+    if (uExist.data && uExist.data.length > 0) {
+      showLoading(false);
+      initApp();
+      return;
+    }
 
-  // 5. Crear catálogo público por defecto
-  await (await sb.from('catalogos_publicos')).insert({ tenant_id: tenant.id, titulo: negocio });
+    // 5. Crear tenant
+    const tQ = await (await sb.from('tenants')).insert({ nombre, negocio, email, whatsapp: wa });
+    const tenant = tQ.data && tQ.data[0];
+    if (!tenant || !tenant.id) {
+      showLoading(false);
+      showAuthError('Error al crear el negocio. Intentá de nuevo.');
+      return;
+    }
 
-  showLoading(false);
-  initApp();
+    // 6. Crear usuario
+    await (await sb.from('usuarios')).insert({
+      auth_id: authUser.id, tenant_id: tenant.id,
+      nombre, email, rol: 'admin'
+    });
+
+    // 7. Crear catalogo publico por defecto
+    await (await sb.from('catalogos_publicos')).insert({ tenant_id: tenant.id, titulo: negocio });
+
+    showLoading(false);
+    initApp();
+  } catch(e) {
+    showLoading(false);
+    showAuthError('Error inesperado: ' + e.message);
+    console.error(e);
+  }
 }
 
 async function doLogout() {

@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     :root {
       --wine: #7B1D1D;
@@ -436,6 +437,11 @@
         <div class="section-title" style="margin:0">Productos</div>
         <button class="btn btn-primary btn-sm" onclick="openProductoForm()">+ Agregar</button>
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button class="btn btn-outline btn-sm" style="flex:1;" onclick="document.getElementById('excel-input').click()">📥 Importar Excel</button>
+        <button class="btn btn-gold btn-sm" style="flex:1;" onclick="openCatalogoSettings()">🔗 Compartir catálogo</button>
+      </div>
+      <input type="file" id="excel-input" accept=".xlsx,.xls,.csv" style="display:none;" onchange="importarExcel(this.files[0])" />
       <input class="search-bar" placeholder="🔍  Buscar producto..." oninput="filtrarProductos(this.value)" />
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <div class="chip active" onclick="filtroTipo('todos',this)">Todos</div>
@@ -1515,6 +1521,79 @@ async function eliminarProducto(id) {
   await loadProductos();
   renderCatalogo();
   showToast('Producto eliminado');
+}
+
+// ============================
+// IMPORTAR PRODUCTOS DESDE EXCEL/CSV
+// ============================
+async function importarExcel(file) {
+  if (!file) return;
+  showLoading(true);
+  try {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+    if (!rows.length) {
+      showLoading(false);
+      showToast('El archivo está vacío', 'error');
+      return;
+    }
+
+    // Normalizar nombres de columnas (acepta variantes en español)
+    const norm = s => String(s).toLowerCase().trim();
+    const getVal = (row, keys) => {
+      for (const k of Object.keys(row)) {
+        if (keys.includes(norm(k))) return row[k];
+      }
+      return '';
+    };
+
+    const productos = rows.map(row => {
+      const nombre = String(getVal(row, ['nombre','producto','articulo','artículo']) || '').trim();
+      const precio = parseFloat(getVal(row, ['precio','precio unitario','price'])) || 0;
+      const stock = parseInt(getVal(row, ['stock','cantidad','existencia'])) || 0;
+      const tipoRaw = norm(getVal(row, ['tipo','categoria','categoría']) || 'producto');
+      const tipo = tipoRaw.includes('servicio') ? 'servicio' : 'producto';
+      const descripcion = String(getVal(row, ['descripcion','descripción','detalle']) || '').trim();
+      return { nombre, precio, stock, tipo, descripcion };
+    }).filter(p => p.nombre && p.precio >= 0);
+
+    if (!productos.length) {
+      showLoading(false);
+      showToast('No se encontraron productos válidos. Verificá las columnas: Nombre, Precio, Stock', 'error');
+      return;
+    }
+
+    const toInsert = productos.map(p => ({
+      tenant_id: STATE.tenant.id,
+      nombre: p.nombre,
+      descripcion: p.descripcion,
+      precio: p.precio,
+      tipo: p.tipo,
+      stock: p.tipo === 'servicio' ? 0 : p.stock,
+      emoji: p.tipo === 'servicio' ? '⚙️' : '📦',
+      activo: true
+    }));
+
+    const result = await (await sb.from('productos')).insert(toInsert);
+    if (result.error) {
+      showLoading(false);
+      showToast('Error al importar: ' + result.error.message, 'error');
+      return;
+    }
+
+    await loadProductos();
+    renderCatalogo();
+    showLoading(false);
+    showToast(`✓ ${toInsert.length} producto(s) importado(s)!`, 'success');
+    document.getElementById('excel-input').value = '';
+  } catch (e) {
+    showLoading(false);
+    showToast('Error al leer el archivo. Verificá el formato.', 'error');
+    console.error(e);
+  }
 }
 
 // ============================

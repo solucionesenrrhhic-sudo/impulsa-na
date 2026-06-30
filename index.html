@@ -2067,4 +2067,13 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 
 // ============================
 // CHECK CATÁLOGO PÚBLICO
-// ================
+// ============================
+const urlParams = new URLSearchParams(location.search);
+const catToken = urlParams.get('catalogo');
+if (catToken) {
+  document.getElementById('loading').style.display = 'flex';
+  initCatalogoPublico(catToken);
+}
+</script>
+</body>
+</html>

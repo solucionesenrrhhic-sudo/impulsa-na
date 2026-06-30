@@ -873,7 +873,11 @@ class SBQuery {
       body: JSON.stringify(Array.isArray(body) ? body : [body])
     });
     const d = await r.json();
-    return { data: Array.isArray(d) ? d : [d], error: d.error || null };
+    if (!r.ok) {
+      const msg = (d && (d.message || d.msg || d.error_description || d.error)) || `Error ${r.status}`;
+      return { data: [], error: { message: msg, code: d?.code, status: r.status } };
+    }
+    return { data: Array.isArray(d) ? d : [d], error: null };
   }
 
   async update(body, id) {
@@ -993,15 +997,20 @@ async function doRegister() {
     const tenant = tQ.data && tQ.data[0];
     if (!tenant || !tenant.id) {
       showLoading(false);
-      showAuthError('Error al crear el negocio. Intentá de nuevo.');
+      showAuthError('Error al crear el negocio: ' + (tQ.error?.message || 'desconocido'));
       return;
     }
 
     // 6. Crear usuario
-    await (await sb.from('usuarios')).insert({
+    const uQ = await (await sb.from('usuarios')).insert({
       auth_id: authUser.id, tenant_id: tenant.id,
       nombre, email, rol: 'admin'
     });
+    if (uQ.error) {
+      showLoading(false);
+      showAuthError('Error al crear usuario: ' + (uQ.error?.message || 'desconocido'));
+      return;
+    }
 
     // 7. Crear catalogo publico por defecto
     await (await sb.from('catalogos_publicos')).insert({ tenant_id: tenant.id, titulo: negocio });

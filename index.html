@@ -649,8 +649,21 @@
       </div>
     </div>
     <div class="form-group">
-      <label>Emoji / ícono</label>
-      <input type="text" id="prod-emoji" placeholder="📦" maxlength="4" />
+      <label>Foto del producto</label>
+      <div style="display:flex;align-items:center;gap:12px;">
+        <div id="prod-foto-preview" style="width:64px;height:64px;border-radius:10px;background:var(--cream);display:flex;align-items:center;justify-content:center;font-size:28px;overflow:hidden;flex-shrink:0;">📦</div>
+        <div style="flex:1;">
+          <input type="file" id="prod-foto-input" accept="image/*" style="display:none;" onchange="onProdFotoChange(this.files[0])" />
+          <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('prod-foto-input').click()">📷 Subir foto</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="quitarFotoProducto()">Quitar</button>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <label style="font-size:11px;">O elegí un emoji</label>
+        <div id="emoji-picker" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"></div>
+      </div>
+      <input type="hidden" id="prod-emoji" />
+      <input type="hidden" id="prod-foto-url" />
     </div>
     <input type="hidden" id="prod-edit-id" />
     <button class="btn btn-primary btn-full mt-8" onclick="guardarProducto()">Guardar producto</button>
@@ -1439,7 +1452,7 @@ function renderCatalogo(filtroTipoVal = 'todos', busqueda = '') {
   }
   list.innerHTML = prods.map(p => `
     <div class="producto-card">
-      <div class="producto-img" style="font-size:52px;display:flex;align-items:center;justify-content:center;">${p.emoji || (p.tipo === 'servicio' ? '⚙️' : '📦')}</div>
+      <div class="producto-img" style="font-size:52px;display:flex;align-items:center;justify-content:center;overflow:hidden;">${p.imagen_url ? `<img src="${p.imagen_url}" style="width:100%;height:100%;object-fit:cover;" />` : (p.emoji || (p.tipo === 'servicio' ? '⚙️' : '📦'))}</div>
       <div class="producto-body">
         <div style="display:flex;align-items:center;justify-content:space-between;">
           <div class="producto-nombre">${p.nombre}</div>
@@ -1464,6 +1477,57 @@ function filtroTipo(tipo, chip) {
   renderCatalogo(tipo);
 }
 
+const EMOJI_OPTIONS = ['📦','⚙️','👜','👗','👟','💍','🧴','🕯️','🍰','☕','🎂','💄','🧁','🌸','🧶','📿','👒','🧸','🎨','🍫'];
+
+function renderEmojiPicker(selected) {
+  const picker = document.getElementById('emoji-picker');
+  picker.innerHTML = EMOJI_OPTIONS.map(e => `
+    <div onclick="selectEmoji('${e}')" style="width:36px;height:36px;border-radius:8px;background:${e===selected?'var(--wine)':'var(--cream)'};display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;">${e}</div>
+  `).join('');
+}
+
+function selectEmoji(e) {
+  document.getElementById('prod-emoji').value = e;
+  document.getElementById('prod-foto-url').value = '';
+  document.getElementById('prod-foto-preview').innerHTML = e;
+  renderEmojiPicker(e);
+}
+
+async function onProdFotoChange(file) {
+  if (!file) return;
+  showLoading(true);
+  try {
+    const ext = file.name.split('.').pop();
+    const path = `${STATE.tenant.id}/${Date.now()}.${ext}`;
+    const r = await fetch(`${SUPABASE_URL}/storage/v1/object/productos/${path}`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${sb.token}`, 'apikey': SUPABASE_KEY, 'Content-Type': file.type },
+      body: file
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      throw new Error(err.message || 'Error al subir la foto');
+    }
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/productos/${path}`;
+    document.getElementById('prod-foto-url').value = publicUrl;
+    document.getElementById('prod-emoji').value = '';
+    document.getElementById('prod-foto-preview').innerHTML = `<img src="${publicUrl}" style="width:100%;height:100%;object-fit:cover;" />`;
+    renderEmojiPicker('');
+    showLoading(false);
+  } catch (e) {
+    showLoading(false);
+    showToast('No se pudo subir la foto. Verificá el bucket "productos" en Supabase Storage.', 'error');
+    console.error(e);
+  }
+}
+
+function quitarFotoProducto() {
+  document.getElementById('prod-foto-url').value = '';
+  document.getElementById('prod-emoji').value = '📦';
+  document.getElementById('prod-foto-preview').innerHTML = '📦';
+  renderEmojiPicker('📦');
+}
+
 function openProductoForm(id) {
   const prod = id ? STATE.productos.find(p => p.id === id) : null;
   document.getElementById('prod-form-title').textContent = prod ? '✏️ Editar Producto' : '📦 Nuevo Producto';
@@ -1471,8 +1535,18 @@ function openProductoForm(id) {
   document.getElementById('prod-desc').value = prod?.descripcion || '';
   document.getElementById('prod-precio').value = prod?.precio || '';
   document.getElementById('prod-stock').value = prod?.stock || '0';
-  document.getElementById('prod-emoji').value = prod?.emoji || '';
+  document.getElementById('prod-emoji').value = prod?.emoji || (prod?.imagen_url ? '' : '📦');
+  document.getElementById('prod-foto-url').value = prod?.imagen_url || '';
   document.getElementById('prod-edit-id').value = prod?.id || '';
+
+  const preview = document.getElementById('prod-foto-preview');
+  if (prod?.imagen_url) {
+    preview.innerHTML = `<img src="${prod.imagen_url}" style="width:100%;height:100%;object-fit:cover;" />`;
+  } else {
+    preview.innerHTML = prod?.emoji || '📦';
+  }
+  renderEmojiPicker(prod?.emoji || (prod?.imagen_url ? '' : '📦'));
+
   setTipoProd(prod?.tipo || 'producto');
   openOverlay('overlay-producto');
 }
@@ -1497,6 +1571,7 @@ async function guardarProducto() {
     tipo: STATE.tipoProd,
     stock: parseInt(document.getElementById('prod-stock').value) || 0,
     emoji: document.getElementById('prod-emoji').value || '',
+    imagen_url: document.getElementById('prod-foto-url').value || null,
     activo: true
   };
 
@@ -1931,7 +2006,7 @@ async function initCatalogoPublico(token) {
           const inCart = carrito[p.id];
           return `
             <div class="cat-pub-card">
-              <div class="cat-pub-img">${p.emoji || (p.tipo === 'servicio' ? '⚙️' : '📦')}</div>
+              <div class="cat-pub-img" style="overflow:hidden;">${p.imagen_url ? `<img src="${p.imagen_url}" style="width:100%;height:100%;object-fit:cover;" />` : (p.emoji || (p.tipo === 'servicio' ? '⚙️' : '📦'))}</div>
               <div class="cat-pub-body">
                 <div class="cat-pub-nombre">${p.nombre}</div>
                 ${p.descripcion ? `<div style="font-size:11px;color:var(--text-muted);margin:3px 0;">${p.descripcion}</div>` : ''}

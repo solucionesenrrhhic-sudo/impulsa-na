@@ -793,7 +793,11 @@ const sb = {
       headers: { 'Content-Type': 'application/json', 'apikey': this.key },
       body: JSON.stringify({ email, password, data: meta })
     });
-    return r.json();
+    const d = await r.json();
+    if (!r.ok) {
+      d.error = { message: d.msg || d.error_description || d.error || JSON.stringify(d) };
+    }
+    return d;
   },
 
   async signIn(email, password) {
@@ -804,6 +808,9 @@ const sb = {
     });
     const d = await r.json();
     if (d.access_token) this.token = d.access_token;
+    if (!r.ok) {
+      d.error = { message: d.msg || d.error_description || d.error || JSON.stringify(d) };
+    }
     return d;
   },
 
@@ -2060,13 +2067,4 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 
 // ============================
 // CHECK CATÁLOGO PÚBLICO
-// ============================
-const urlParams = new URLSearchParams(location.search);
-const catToken = urlParams.get('catalogo');
-if (catToken) {
-  document.getElementById('loading').style.display = 'flex';
-  initCatalogoPublico(catToken);
-}
-</script>
-</body>
-</html>
+// ================
